@@ -105,10 +105,8 @@ static void ext4_finish_bio(struct bio *bio)
 				continue;
 			}
 			clear_buffer_async_write(bh);
-			if (bio->bi_status) {
-				set_buffer_write_io_error(bh);
+			if (bio->bi_status)
 				buffer_io_error(bh);
-			}
 		} while ((bh = bh->b_this_page) != head);
 		bit_spin_unlock(BH_Uptodate_Lock, &head->b_state);
 		local_irq_restore(flags);
@@ -355,6 +353,8 @@ void ext4_io_submit(struct ext4_io_submit *io)
 				  REQ_SYNC : 0;
 		io->io_bio->bi_write_hint = io->io_end->inode->i_write_hint;
 		bio_set_op_attrs(io->io_bio, REQ_OP_WRITE, io_op_flags);
+		if (fscrypt_inline_encrypted(io->io_end->inode))
+			fscrypt_set_bio_cryptd(io->io_end->inode, io->io_bio);
 		submit_bio(io->io_bio);
 	}
 	io->io_bio = NULL;
@@ -480,29 +480,20 @@ int ext4_bio_write_page(struct ext4_io_submit *io,
 	bh = head = page_buffers(page);
 
 	if (ext4_encrypted_inode(inode) && S_ISREG(inode->i_mode) &&
-	    nr_to_submit) {
+	    nr_to_submit && !fscrypt_inline_encrypted(inode)) {
 		gfp_t gfp_flags = GFP_NOFS;
 
-		/*
-		 * Since bounce page allocation uses a mempool, we can only use
-		 * a waiting mask (i.e. request guaranteed allocation) on the
-		 * first page of the bio.  Otherwise it can deadlock.
-		 */
-		if (io->io_bio)
-			gfp_flags = GFP_NOWAIT | __GFP_NOWARN;
 	retry_encrypt:
 		data_page = fscrypt_encrypt_page(inode, page, PAGE_SIZE, 0,
 						page->index, gfp_flags);
 		if (IS_ERR(data_page)) {
 			ret = PTR_ERR(data_page);
-			if (ret == -ENOMEM &&
-			    (io->io_bio || wbc->sync_mode == WB_SYNC_ALL)) {
-				gfp_flags = GFP_NOFS;
-				if (io->io_bio)
+			if (ret == -ENOMEM && wbc->sync_mode == WB_SYNC_ALL) {
+				if (io->io_bio) {
 					ext4_io_submit(io);
-				else
-					gfp_flags |= __GFP_NOFAIL;
-				congestion_wait(BLK_RW_ASYNC, HZ/50);
+					congestion_wait(BLK_RW_ASYNC, HZ/50);
+				}
+				gfp_flags |= __GFP_NOFAIL;
 				goto retry_encrypt;
 			}
 			data_page = NULL;

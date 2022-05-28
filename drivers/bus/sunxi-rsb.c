@@ -224,8 +224,6 @@ static struct sunxi_rsb_device *sunxi_rsb_device_create(struct sunxi_rsb *rsb,
 
 	dev_dbg(&rdev->dev, "device %s registered\n", dev_name(&rdev->dev));
 
-	return rdev;
-
 err_device_add:
 	put_device(&rdev->dev);
 
@@ -347,7 +345,7 @@ static int sunxi_rsb_read(struct sunxi_rsb *rsb, u8 rtaddr, u8 addr,
 	if (ret)
 		goto unlock;
 
-	*buf = readl(rsb->regs + RSB_DATA) & GENMASK(len * 8 - 1, 0);
+	*buf = readl(rsb->regs + RSB_DATA);
 
 unlock:
 	mutex_unlock(&rsb->lock);

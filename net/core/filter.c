@@ -472,18 +472,11 @@ do_pass:
 
 #define BPF_EMIT_JMP							\
 	do {								\
-		const s32 off_min = S16_MIN, off_max = S16_MAX;		\
-		s32 off;						\
-									\
 		if (target >= len || target < 0)			\
 			goto err;					\
-		off = addrs ? addrs[target] - addrs[i] - 1 : 0;		\
+		insn->off = addrs ? addrs[target] - addrs[i] - 1 : 0;	\
 		/* Adjust pc relative offset for 2nd or 3rd insn. */	\
-		off -= insn - tmp_insns;				\
-		/* Reject anything not fitting into insn->off. */	\
-		if (off < off_min || off > off_max)			\
-			goto err;					\
-		insn->off = off;					\
+		insn->off -= insn - tmp_insns;				\
 	} while (0)
 
 		case BPF_JMP | BPF_JA:
@@ -2104,6 +2097,8 @@ static int bpf_skb_proto_4_to_6(struct sk_buff *skb)
 			skb_shinfo(skb)->gso_type |=  SKB_GSO_TCPV6;
 		}
 
+		/* Due to IPv6 header, MSS needs to be downgraded. */
+		skb_shinfo(skb)->gso_size -= len_diff;
 		/* Header must be checked, and gso_segs recomputed. */
 		skb_shinfo(skb)->gso_type |= SKB_GSO_DODGY;
 		skb_shinfo(skb)->gso_segs = 0;
@@ -2138,6 +2133,8 @@ static int bpf_skb_proto_6_to_4(struct sk_buff *skb)
 			skb_shinfo(skb)->gso_type |=  SKB_GSO_TCPV4;
 		}
 
+		/* Due to IPv4 header, MSS can be upgraded. */
+		skb_shinfo(skb)->gso_size += len_diff;
 		/* Header must be checked, and gso_segs recomputed. */
 		skb_shinfo(skb)->gso_type |= SKB_GSO_DODGY;
 		skb_shinfo(skb)->gso_segs = 0;
@@ -2282,14 +2279,19 @@ static int bpf_skb_net_shrink(struct sk_buff *skb, u32 len_diff)
 	return 0;
 }
 
-#define BPF_SKB_MAX_LEN SKB_MAX_ALLOC
+static u32 __bpf_skb_max_len(const struct sk_buff *skb)
+{
+	if (skb_at_tc_ingress(skb) || !skb->dev)
+		return SKB_MAX_ALLOC;
+	return skb->dev->mtu + skb->dev->hard_header_len;
+}
 
 static int bpf_skb_adjust_net(struct sk_buff *skb, s32 len_diff)
 {
 	bool trans_same = skb->transport_header == skb->network_header;
 	u32 len_cur, len_diff_abs = abs(len_diff);
 	u32 len_min = bpf_skb_net_base_len(skb);
-	u32 len_max = BPF_SKB_MAX_LEN;
+	u32 len_max = __bpf_skb_max_len(skb);
 	__be16 proto = skb->protocol;
 	bool shrink = len_diff < 0;
 	int ret;
@@ -2368,7 +2370,7 @@ static int bpf_skb_trim_rcsum(struct sk_buff *skb, unsigned int new_len)
 BPF_CALL_3(bpf_skb_change_tail, struct sk_buff *, skb, u32, new_len,
 	   u64, flags)
 {
-	u32 max_len = BPF_SKB_MAX_LEN;
+	u32 max_len = __bpf_skb_max_len(skb);
 	u32 min_len = __bpf_skb_min_len(skb);
 	int ret;
 
@@ -2419,7 +2421,7 @@ static const struct bpf_func_proto bpf_skb_change_tail_proto = {
 BPF_CALL_3(bpf_skb_change_head, struct sk_buff *, skb, u32, head_room,
 	   u64, flags)
 {
-	u32 max_len = BPF_SKB_MAX_LEN;
+	u32 max_len = __bpf_skb_max_len(skb);
 	u32 new_len = skb->len + head_room;
 	int ret;
 
@@ -2441,7 +2443,6 @@ BPF_CALL_3(bpf_skb_change_head, struct sk_buff *, skb, u32, head_room,
 		__skb_push(skb, head_room);
 		memset(skb->data, 0, head_room);
 		skb_reset_mac_header(skb);
-		skb_reset_mac_len(skb);
 	}
 
 	bpf_compute_data_end(skb);
@@ -3123,8 +3124,7 @@ BPF_CALL_5(bpf_setsockopt, struct bpf_sock_ops_kern *, bpf_sock,
 			strncpy(name, optval, min_t(long, optlen,
 						    TCP_CA_NAME_MAX-1));
 			name[TCP_CA_NAME_MAX-1] = 0;
-			ret = tcp_set_congestion_control(sk, name, false,
-							 reinit, true);
+			ret = tcp_set_congestion_control(sk, name, false, reinit);
 		} else {
 			struct tcp_sock *tp = tcp_sk(sk);
 
@@ -3190,8 +3190,6 @@ bpf_base_func_proto(enum bpf_func_id func_id)
 		return &bpf_tail_call_proto;
 	case BPF_FUNC_ktime_get_ns:
 		return &bpf_ktime_get_ns_proto;
-	case BPF_FUNC_ktime_get_boot_ns:
-		return &bpf_ktime_get_boot_ns_proto;
 	case BPF_FUNC_trace_printk:
 		if (capable(CAP_SYS_ADMIN))
 			return bpf_get_trace_printk_proto();
@@ -3651,9 +3649,9 @@ void bpf_warn_invalid_xdp_action(u32 act)
 {
 	const u32 act_max = XDP_REDIRECT;
 
-	pr_warn_once("%s XDP return value %u, expect packet loss!\n",
-		     act > act_max ? "Illegal" : "Driver unsupported",
-		     act);
+	WARN_ONCE(1, "%s XDP return value %u, expect packet loss!\n",
+		  act > act_max ? "Illegal" : "Driver unsupported",
+		  act);
 }
 EXPORT_SYMBOL_GPL(bpf_warn_invalid_xdp_action);
 

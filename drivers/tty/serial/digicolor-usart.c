@@ -476,10 +476,10 @@ static int digicolor_uart_probe(struct platform_device *pdev)
 		return PTR_ERR(uart_clk);
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	dp->port.mapbase = res->start;
 	dp->port.membase = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(dp->port.membase))
 		return PTR_ERR(dp->port.membase);
-	dp->port.mapbase = res->start;
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
@@ -545,11 +545,7 @@ static int __init digicolor_uart_init(void)
 	if (ret)
 		return ret;
 
-	ret = platform_driver_register(&digicolor_uart_platform);
-	if (ret)
-		uart_unregister_driver(&digicolor_uart);
-
-	return ret;
+	return platform_driver_register(&digicolor_uart_platform);
 }
 module_init(digicolor_uart_init);
 

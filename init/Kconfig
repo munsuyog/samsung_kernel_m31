@@ -65,7 +65,8 @@ config CROSS_COMPILE
 
 config COMPILE_TEST
 	bool "Compile also drivers which will not load"
-	depends on HAS_IOMEM
+	depends on !UML
+	default n
 	help
 	  Some drivers can be compiled on a different platform than they are
 	  intended to be run on. Despite they cannot be loaded there (or even
@@ -547,8 +548,7 @@ config IKCONFIG_PROC
 
 config LOG_BUF_SHIFT
 	int "Kernel log buffer size (16 => 64KB, 17 => 128KB)"
-	range 12 25 if !H8300
-	range 12 19 if H8300
+	range 12 25
 	default 17
 	depends on PRINTK
 	help
@@ -638,7 +638,7 @@ menu "FAIR Scheuler tunables"
 
 choice
 	prompt "Utilization's PELT half-Life"
-	default PELT_UTIL_HALFLIFE_32
+	default PELT_UTIL_HALFLIFE_16
 	help
 	  Allows choosing one of the possible values for the PELT half-life to
 	  be used for the update of the utilization of tasks and CPUs.
@@ -646,7 +646,7 @@ choice
 	  build up to 50% utilization. The higher the half-life the longer it
 	  takes for a task to be represented as a big one.
 
-	  If not sure, use the default of 32 ms.
+	  If not sure, use the deafult of 16 ms.
 
 config PELT_UTIL_HALFLIFE_32
 	bool "32 ms, default for server"
@@ -764,6 +764,11 @@ config MEMCG_SWAP_ENABLED
 	  select this option (if, for some reason, they need to disable it
 	  then swapaccount=0 does the trick).
 
+config MEMCG_FORCE_USE_VM_SWAPPINESS
+	bool "Force to use vm_swappiness instead of memcg->swappiness"
+	depends on MEMCG_SWAP
+	default y
+
 config BLK_CGROUP
 	bool "IO controller"
 	depends on BLOCK
@@ -816,7 +821,6 @@ config FAIR_GROUP_SCHED
 config CFS_BANDWIDTH
 	bool "CPU bandwidth provisioning for FAIR_GROUP_SCHED"
 	depends on FAIR_GROUP_SCHED
-	depends on !SCHED_WALT
 	default n
 	help
 	  This option allows users to define CPU bandwidth rates (limits) for
@@ -1066,6 +1070,18 @@ config SCHED_TUNE
 
 	  If unsure, say N.
 
+config SCHED_EMS
+	bool "Exynos Mobile Scheduler"
+	depends on SMP
+	help
+	  This option supports Exynos mobile scheduler. It is designed to
+	  secure the limits of energy aware scheduler. This option provides
+	  features such as independent boosting functinos such as on-time migration,
+	  and prefer_perf and enhanced prefer_idle that work in conjunction with
+	  SCHEDTUNE.
+
+	  If unsure, say N.
+
 config DEFAULT_USE_ENERGY_AWARE
 	bool "Default to enabling the Energy Aware Scheduler feature"
 	default n
@@ -1075,6 +1091,28 @@ config DEFAULT_USE_ENERGY_AWARE
 	  via sysctl.
 
 	  Say N if unsure.
+
+config SIMPLIFIED_ENERGY_MODEL
+	bool "Enable simplified energy model feature"
+	depends on SCHED_EMS
+	default n
+	help
+	  This option enables support for simplified energy model. This allows
+	  using a simple energy table declared per_cpu instead of using the EAS
+	  energy table.
+
+	  Say N if unsure.
+
+config SCHED_USE_FLUID_RT
+	bool "Enable Fluid RT scheduler feature"
+	depends on SCHED_EMS
+	default n
+	help
+	Basically, the Fluid RT selects the core by a task priority as usual.
+	But beyond the basic behavior, FRT performs the load balancing of
+	RT task by core selection with reference to utilization of rq.
+	And in some circumstances, she allows the task of lower priority
+	to preempt the higher one based on weighted load.
 
 config SYSFS_DEPRECATED
 	bool "Enable deprecated sysfs features to support old userspace tools"
@@ -1494,16 +1532,6 @@ config ADVISE_SYSCALLS
 	  usage, improving performance. If building an embedded system where no
 	  applications use these syscalls, you can disable this option to save
 	  space.
-
-config BPF_UNPRIV_DEFAULT_OFF
-	bool "Disable unprivileged BPF by default"
-	depends on BPF_SYSCALL
-	help
-	  Disables unprivileged BPF by default by setting the corresponding
-	  /proc/sys/kernel/unprivileged_bpf_disabled knob to 2. An admin can
-	  still reenable it by setting it to 0 later on, or permanently
-	  disable it by setting it to 1 (from which no other transition to
-	  0 is possible anymore).
 
 config USERFAULTFD
 	bool "Enable userfaultfd() system call"
@@ -2043,3 +2071,5 @@ config ASN1
 	  functions to call on what tags.
 
 source "kernel/Kconfig.locks"
+
+source "kernel/ftt/Kconfig"

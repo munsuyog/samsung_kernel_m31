@@ -33,6 +33,7 @@ if __name__ == "__main__":
         print("Usage " + sys.argv[0] + " elf_file readelf_path")
         sys.exit(-1)
 
+    elf_file = os.path.abspath(sys.argv[1])
     readelf_path = os.path.abspath(sys.argv[2])
     modules = sys.argv[3:]
 
